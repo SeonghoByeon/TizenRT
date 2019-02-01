@@ -10,18 +10,17 @@
  */
 static hal_data g_rand;
 #define RAND_LEN 100
+
 TEST_SETUP(generate_random)
 {
 	ST_START_TEST;
-	g_rand.data = (uint8_t *)malloc(sizeof(RAND_LEN));
-	ST_EXPECT_NEQ(NULL, g_rand.data);
 	ST_END_TEST;
 }
 
 TEST_TEARDOWN(generate_random)
 {
 	ST_START_TEST;
-	free(g_rand.data);
+	hal_free_data(&g_rand);
 	ST_END_TEST;
 }
 
@@ -38,11 +37,14 @@ TEST_F(generate_random)
  */
 static hal_data g_plain_text;
 static hal_data g_hash;
+
 TEST_SETUP(get_hash)
 {
 	ST_START_TEST;
+
 	g_plain_text.data = "01234567890123456789";
 	g_plain_text.length = 20;
+
 	ST_END_TEST;
 }
 
@@ -56,7 +58,9 @@ TEST_TEARDOWN(get_hash)
 TEST_F(get_hash)
 {
 	ST_START_TEST;
+
 	ST_EXPECT(0, hal_get_hash(HAL_HASH_SHA256, &g_plain_text, &g_hash));
+
 	ST_END_TEST;
 }
 
@@ -72,7 +76,7 @@ TEST_SETUP(get_hmac)
 {
 	ST_START_TEST;
 
-	ST_EXPECT(0, hal_hmac_generate_key(HAL_HMAC_SHA256, HAL_TEST_HMAC_KEY_SLOT, &g_hmac_key));
+	ST_EXPECT(0, hal_hmac_generate_key(HAL_HMAC_SHA256, HAL_TEST_HMAC_KEY_SLOT));
 	g_hmac.data = NULL;
 	g_hmac.data_len = 0;
 
@@ -85,13 +89,17 @@ TEST_SETUP(get_hmac)
 TEST_TEARDOWN(get_hmac)
 {
 	ST_START_TEST;
-	ST_EXPECT(0, hal_get_hmac(HAL_HMAC_SHA256, &g_plain_text, &g_hmac))
+
+	ST_EXPECT(0, hal_remove_key(HAL_HMAC_SHA256, HAL_TEST_HMAC_KEY_SLOT));
+
 	ST_END_TEST;
 }
 
 TEST_F(get_hmac)
 {
 	ST_START_TEST;
+
+	ST_EXPECT(0, hal_get_hmac(HAL_HMAC_SHA256, &g_plain_text, &g_hmac));
 
 	ST_END_TEST;
 }
@@ -100,30 +108,295 @@ TEST_F(get_hmac)
  * Desc: Get RSA signagure
  * Refered https://developer.artik.io/documentation/security-api/see-authentication-test_8c-example.html
  */
-static hal_data g_rsa_pubkey;
+static hal_data g_hash;
+static hal_data g_sign;
+#define HAL_TEST_RSA_HASH_LEN 100
 
-TEST_SETUP()
+TEST_SETUP(rsa_sign)
 {
 	ST_START_TEST;
 
-	ST_EXPECT(0, hal_rsa_generate_key(HAL_RSA_1024, HAL_TEST_RSA_KEY_SLOT, &g_rsa_pubkey));
+	ST_EXPECT(0, hal_generate_key(HAL_KEY_RSA_1024, HAL_TEST_RSA_KEY_SLOT));
+
+	g_hash.data = (uint8_t *)malloc(HAL_TEST_RSA_HASH_LEN);
+	ST_EXPECT_NEQ(NULL, g_hash.data);
+	memset(g_hash.data, 0xa5, 100);
 
 	ST_END_TEST;
 }
 
-TEST_TEARDOWN()
+TEST_TEARDOWN(rsa_sign)
 {
 	ST_START_TEST;
+
+	ST_EXPECT(0, hal_remove_key(HAL_KEY_RSA_1024, HAL_TEST_RSA_KEY_SLOT));
+
+	/*  g_hash is not allocated from hal API so it'd be better to free here */
+	hal_test_free_buffer(&g_hash);
+	hal_free_data(&g_sign);
 
 	ST_END_TEST;
 }
 
-TEST_F()
+TEST_F(rsa_sign)
 {
 	ST_START_TEST;
 
+	ST_EXPECT(0, hal_rsa_sign_md(HAL_RSAES_PKCS1_OAEP_MGF1_SHA256, &g_hash, HAL_TEST_RSA_KEY_SLOT, &g_sign));
+
 	ST_END_TEST;
 }
+
+/*
+ * Desc: Verify RSA signature
+ * Refered https://developer.artik.io/documentation/security-api/see-authentication-test_8c-example.html
+ */
+TEST_SETUP(rsa_verify)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_generate_key(HAL_KEY_RSA_1024, HAL_TEST_RSA_KEY_SLOT));
+
+	g_hash.data = (uint8_t *)malloc(HAL_TEST_RSA_HASH_LEN);
+	ST_EXPECT_NEQ(NULL, g_hash.data);
+
+	memset(g_hash.data, 0xa5, HAL_TEST_RSA_HASH_LEN);
+
+	ST_EXPECT(0, hal_rsa_sign_md(HAL_RSAES_PKCS1_OAEP_MGF1_SHA256, &g_hash, HAL_TEST_RSA_KEY_SLOT, &g_sign));
+
+	ST_END_TEST;
+}
+
+TEST_TEARDOWN(rsa_verify)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_remove_key(HAL_KEY_RSA_1024, HAL_TEST_RSA_KEY_SLOT));
+
+	/*  g_hash is not allocated from hal API so it'd be better to free here */
+	hal_test_free_buffer(&g_hash);
+
+	hal_free_data(&g_sign);
+
+	ST_END_TEST;
+}
+
+TEST_F(rsa_verify)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_rsa_verify(HAL_RSAES_PKCS1_OAEP_MGF1_SHA256, &g_hash, &g_sign));
+
+	ST_END_TEST;
+}
+
+/*
+ * Desc: Get ECDSA
+ * Refered https://developer.artik.io/documentation/security-api/see-authentication-test_8c-example.html
+ */
+#define HAL_TEST_ECC_KEY_SLOT 1
+#define HAL_TEST_ECC_HASH_LEN 100
+TEST_SETUP(ecdsa_sign)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_generate_key(HAL_KEY_ECC_BRAINPOOL_P256R1, HAL_TEST_ECC_KEY_SLOT));
+
+	g_hash.data = (uint8_t *)malloc(HAL_TEST_ECC_HASH_LEN);
+	ST_EXPECT_NEQ(NULL, g_hash.data);
+
+	memset(g_hash.data, 0xa5, HAL_TEST_ECC_HASH_LEN);
+
+	ST_END_TEST;
+}
+
+TEST_TEARDOWN(ecdsa_sign)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_remove_key(HAL_KEY_ECC_BRAINPOOL_P256R1, HAL_TEST_ECC_KEY_SLOT));
+
+	hal_test_free_buffer(&g_hash);
+
+	hal_free_data(&g_sign);
+
+	ST_END_TEST;
+}
+
+TEST_F(ecdsa_sign)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_ecdsa_sign_md(HAL_ECDSA_BRAINPOOL_P256R1, &g_hash, HAL_TEST_ECC_KEY_SLOT, &g_sign));
+
+	ST_END_TEST;
+}
+
+
+/*
+ * Desc: Verify ECDSA
+ * Refered https://developer.artik.io/documentation/security-api/see-authentication-test_8c-example.html
+ */
+TEST_SETUP(ecdsa_verify)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_generate_key(HAL_KEY_ECC_BRAINPOOL_P256R1, HAL_TEST_ECC_KEY_SLOT));
+
+	g_hash.data = (uint8_t *)malloc(HAL_TEST_ECC_HASH_LEN);
+	ST_EXPECT_NEQ(NULL, g_hash.data);
+
+	memset(g_hash.data, 0xa5, HAL_TEST_ECC_HASH_LEN);
+
+	ST_EXPECT(0, hal_ecdsa_sign_md(HAL_ECDSA_BRAINPOOL_P256R1, &g_hash, HAL_TEST_ECC_KEY_SLOT, &g_sign));
+
+	ST_END_TEST;
+}
+
+TEST_TEARDOWN(ecdsa_verify)
+{
+	ST_START_TEST;
+	ST_EXPECT(0, hal_remove_key(HAL_KEY_ECC_BRAINPOOL_P256R1, HAL_TEST_ECC_KEY_SLOT));
+
+	hal_test_free_buffer(&g_hash);
+
+	hal_free_data(&g_sign);
+
+	ST_END_TEST;
+}
+
+TEST_F(ecdsa_verify)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_ecdsa_verify_md(HAL_ECDSA_BRAINPOOL_P256R1, &g_hash, HAL_TEST_ECC_KEY_SLOT, &g_sign));
+
+	ST_END_TEST;
+}
+
+/*
+ * Desc: Generate DH parameters
+ * Refered https://developer.artik.io/documentation/security-api/see-authentication-test_8c-example.html
+ */
+/* Generate G, P, GX (G^X mod P) */
+#define HAL_TEST_DH_X_SLOT 1
+#define HAL_TEST_DH_Y_SLOT 2
+static hal_dh_data g_dh_data;
+
+unsigned char p_buf_1024[] = {
+	0xb1, 0x0b, 0x8f, 0x96, 0xa0, 0x80, 0xe0, 0x1d, 0xde, 0x92, 0xde, 0x5e, 0xae,
+	0x5d, 0x54, 0xec, 0x52, 0xc9, 0x9f, 0xbc, 0xfb, 0x06, 0xa3, 0xc6, 0x9a, 0x6a,
+	0x9d, 0xca, 0x52, 0xd2, 0x3b, 0x61, 0x60, 0x73, 0xe2, 0x86, 0x75, 0xa2, 0x3d,
+	0x18, 0x98, 0x38, 0xef, 0x1e, 0x2e, 0xe6, 0x52, 0xc0, 0x13, 0xec, 0xb4, 0xae,
+	0xa9, 0x06, 0x11, 0x23, 0x24, 0x97, 0x5c, 0x3c, 0xd4, 0x9b, 0x83, 0xbf, 0xac,
+	0xcb, 0xdd, 0x7d, 0x90, 0xc4, 0xbd, 0x70, 0x98, 0x48, 0x8e, 0x9c, 0x21, 0x9a,
+	0x73, 0x72, 0x4e, 0xff, 0xd6, 0xfa, 0xe5, 0x64, 0x47, 0x38, 0xfa, 0xa3, 0x1a,
+	0x4f, 0xf5, 0x5b, 0xcc, 0xc0, 0xa1, 0x51, 0xaf, 0x5f, 0x0d, 0xc8, 0xb4, 0xbd,
+	0x45, 0xbf, 0x37, 0xdf, 0x36, 0x5c, 0x1a, 0x65, 0xe6, 0x8c, 0xfd, 0xa7, 0x6d,
+	0x4d, 0xa7, 0x08, 0xdf, 0x1f, 0xb2, 0xbc, 0x2e, 0x4a, 0x43, 0x71
+};
+
+unsigned char g_buf_1024[] = {
+	0xa4, 0xd1, 0xcb, 0xd5, 0xc3, 0xfd, 0x34, 0x12, 0x67, 0x65, 0xa4, 0x42, 0xef, 0xb9, 0x99,
+	0x05, 0xf8, 0x10, 0x4d, 0xd2, 0x58, 0xac, 0x50, 0x7f, 0xd6, 0x40, 0x6c, 0xff, 0x14, 0x26,
+	0x6d, 0x31, 0x26, 0x6f, 0xea, 0x1e, 0x5c, 0x41, 0x56, 0x4b, 0x77, 0x7e, 0x69, 0x0f, 0x55,
+	0x04, 0xf2, 0x13, 0x16, 0x02, 0x17, 0xb4, 0xb0, 0x1b, 0x88, 0x6a, 0x5e, 0x91, 0x54, 0x7f,
+	0x9e, 0x27, 0x49, 0xf4, 0xd7, 0xfb, 0xd7, 0xd3, 0xb9, 0xa9, 0x2e, 0xe1, 0x90, 0x9d, 0x0d,
+	0x22, 0x63, 0xf8, 0x0a, 0x76, 0xa6, 0xa2, 0x4c, 0x08, 0x7a, 0x09, 0x1f, 0x53, 0x1d, 0xbf,
+	0x0a, 0x01, 0x69, 0xb6, 0xa2, 0x8a, 0xd6, 0x62, 0xa4, 0xd1, 0x8e, 0x73, 0xaf, 0xa3, 0x2d,
+	0x77, 0x9d, 0x59, 0x18, 0xd0, 0x8b, 0xc8, 0x85, 0x8f, 0x4d, 0xce, 0xf9, 0x7c, 0x2a, 0x24,
+	0x85, 0x5e, 0x6e, 0xeb, 0x22, 0xb3, 0xb2, 0xe5
+};
+
+TEST_SETUP(dh_generate_param)
+{
+	ST_START_TEST;
+
+	g_dh_data.mode = HAL_DH_1024;
+	g_dh_data.G.data = g_buf_1024;
+	g_dh_data.G.data_len = sizeof(g_buf_1024);
+	g_dh_data.P.data = p_buf_1024;
+	g_dh_data.P.data_len = sizeof(p_buf_1024);
+
+	ST_END_TEST;
+}
+
+TEST_TEARDOWN(dh_generate_param)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(hal_remove_key(HAL_TEST_DH_X_SLOT));
+
+	hal_free_data(&g_dh_data.pubkey);
+
+	ST_END_TEST;
+}
+
+TEST_F(dh_generate_param)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_dh_generate_param(HAL_TEST_DH_X_SLOT, &g_dh_data));
+
+	ST_END_TEST;
+}
+
+/*
+ * Desc: Compute DH shared secret
+ * Refered https://developer.artik.io/documentation/security-api/see-authentication-test_8c-example.html
+ */
+static hal_data g_shared_secret_a;
+static hal_data g_shared_secret_b;
+TEST_SETUP(dh_compute_shared_secret)
+{
+	ST_START_TEST;
+
+	g_dh_data_a.mode = HAL_DH_1024;
+	g_dh_data_a.G.data = g_buf_1024;
+	g_dh_data_a.G.data_len = sizeof(g_buf_1024);
+	g_dh_data_a.P.data = p_buf_1024;
+	g_dh_data_a.P.data_len = sizeof(p_buf_1024);
+	ST_EXPECT(0, hal_dh_generate_param(HAL_TEST_DH_X_SLOT, &g_dh_data_a));
+
+	g_dh_data_b.mode = HAL_DH_1024;
+	g_dh_data_b.G.data = g_buf_1024;
+	g_dh_data_b.G.data_len = sizeof(g_buf_1024);
+	g_dh_data_b.P.data = p_buf_1024;
+	g_dh_data_b.P.data_len = sizeof(p_buf_1024);
+	ST_EXPECT(0, hal_dh_generate_param(HAL_TEST_DH_Y_SLOT, &g_dh_data_b));
+
+	ST_END_TEST;
+}
+
+TEST_TEARDOWN(dh_compute_shared_secret)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(hal_remove_key(HAL_TEST_DH_X_SLOT));
+	ST_EXPECT(hal_remove_key(HAL_TEST_DH_Y_SLOT));
+
+	hal_free_data(&g_dh_data_a.pubkey);
+	hal_free_data(&g_dh_data_b.pubkey);
+	hal_free_data(&g_shared_secret_a);
+	hal_free_data(&g_shared_secret_b);
+
+	ST_END_TEST;
+}
+
+TEST_F(dh_compute_shared_secret)
+{
+	ST_START_TEST;
+
+	ST_EXPECT(0, hal_dh_compute_shared_secret(&g_dh_data_a, HAL_TEST_DH_Y_SLOT, &g_shared_secret_a));
+	ST_EXPECT(0, hal_dh_compute_shared_secret(&g_dh_data_b, HAL_TEST_DH_X_SLOT, &g_shared_secret_b));
+
+	ST_EXPECT(g_shared_secret_a.data_len, g_shared_secret_b.data_len);
+	ST_EXPECT(0, memcmp(&g_shared_secret_a.data, &g_shared_secret_b.data, g_shared_secret_a.data_len));
+
+	ST_END_TEST;
+}
+
+
 /* generate_random
  * get_hash
  * get_hmac
@@ -131,8 +404,11 @@ TEST_F()
  * rsa_verify
  * ecdsa_sign
  * ecdsa_verify
- * compute_ecdsh ??
  * dh_generate_param ??
  * dh_compute_shared_secret ??
- * get_get_factory
+
+ * compute_ecdsa ??
+ * generate_ecdhkey
+ * compute_ecdhkey
+ * get_factory
  */
