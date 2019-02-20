@@ -27,8 +27,9 @@ OS_DIR_PATH=${THIS_PATH}/../../../os
 
 source ${OS_DIR_PATH}/.config
 
+BOARD_NAME=${CONFIG_ARCH_BOARD}
 PARTMAP_DIR_PATH=${THIS_PATH}
-PARTITION_KCONFIG=${OS_DIR_PATH}/board/common/Kconfig
+BOARD_KCONFIG=${OS_DIR_PATH}/board/${BOARD_NAME}/Kconfig
 BUILD_DIR_PATH=${OS_DIR_PATH}/../build
 CONFIGS_DIR_PATH=${BUILD_DIR_PATH}/configs
 OUTPUT_BINARY_PATH=${BUILD_DIR_PATH}/output/bin
@@ -145,8 +146,8 @@ compute_ocd_commands()
 
 download()
 {
-        parts_default=`grep -A 2 'config FLASH_PART_NAME' ${PARTITION_KCONFIG} | sed -n 's/\tdefault "\(.*\)".*/\1/p'`
-        parts2=${CONFIG_FLASH_PART_NAME:=${parts_default}}
+        parts_default=`grep -A 2 'config ARTIK05X_FLASH_PART_NAME' ${BOARD_KCONFIG} | sed -n 's/\tdefault "\(.*\)".*/\1/p'`
+        parts2=${CONFIG_ARTIK05X_FLASH_PART_NAME:=${parts_default}}
         parts=`echo $parts2 | sed "s/,/ /g"`
 
         # Make Openocd commands for parts

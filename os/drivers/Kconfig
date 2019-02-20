@@ -482,4 +482,3 @@ menuconfig DRIVERS_WIRELESS
 
 source drivers/wireless/Kconfig
 source drivers/testcase/Kconfig
-source drivers/seclink/Kconfig
