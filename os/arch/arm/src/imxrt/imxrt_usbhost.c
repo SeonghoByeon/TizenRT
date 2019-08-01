@@ -120,11 +120,95 @@ static xcpt_t g_ochandler;
  *   Wait for USB devices to be connected to the EHCI root hub.
  *
  ************************************************************************************/
+#define DRV_PATH "/dev/sda"
+#define WSIZE 512
+#define SECTOR_CNT 4
+char wbuf[WSIZE*SECTOR_CNT];
+char rbuf[WSIZE*SECTOR_CNT];
+
+static int usbmsc_verify(int argc, char *argv[])
+{
+	sleep(2);
+	int ret;
+	int i, j;
+	struct inode *inode;
+	struct geometry geo;
+
+	memset(wbuf, 0xa, sizeof(wbuf));
+	memset(rbuf, 0, sizeof(rbuf));
+	int nsectors = WSIZE*SECTOR_CNT/512;
+	int sector = 10000; // rw block location of usb msc device
+	int total = 1024 * 4; // 4K * 0.5K * 8 = 16MB
+
+	struct timeval w_start;
+	struct timeval r_start;
+	struct timeval w_end;
+	struct timeval r_end;
+
+	ret = open_blockdriver(DRV_PATH, 0, &inode);
+	if (ret < 0) {
+		dbg("Failed to open\n");
+		return -1;
+	}
+
+	if (inode->u.i_bops->geometry) {
+		ret = inode->u.i_bops->geometry(inode, &geo);
+		if (ret < 0) {
+			dbg("Failed to setup\n");
+			return -1;
+		}
+		dbg("nsectors %ld sectorsize %d write? %d\n", (long)geo.geo_nsectors, geo.geo_sectorsize, geo.geo_writeenabled);
+	}
+
+	if (inode->u.i_bops->write) {
+		gettimeofday(&w_start, NULL);
+
+		for(i = 0; i < total; i++) {
+			ret = inode->u.i_bops->write(inode, (uint8_t *)wbuf, sector + (i * nsectors), nsectors);
+			if (ret < 0) {
+				dbg("WRITE failed (%d)\n", ret);
+				return -1;
+			}
+		}
+		gettimeofday(&w_end, NULL);
+	}
+
+	printf("Write time %d bits start %ld.%ld end %ld.%ld\n",
+			8 * nsectors * geo.geo_sectorsize * total,
+			w_start.tv_sec, w_start.tv_usec,
+			w_end.tv_sec,    w_end.tv_usec);
+
+
+	if (inode->u.i_bops->read) {
+		gettimeofday(&r_start, NULL);
+		for(i = 0; i < total; i++) {
+			ret = inode->u.i_bops->read(inode, (uint8_t *)rbuf, sector + (i * nsectors), nsectors);
+			if (ret < 0) {
+				dbg("READ failed (%d)\n", ret);
+				return -1;
+			}
+		}
+		gettimeofday(&r_end, NULL);
+	}
+
+	printf("Read time %d bits start %ld.%ld end %ld.%ld\n",
+			8 * nsectors * geo.geo_sectorsize * total,
+			r_start.tv_sec, r_start.tv_usec,
+			r_end.tv_sec,  r_end.tv_usec);
+
+	for (j = 0; j < geo.geo_sectorsize; j++) {
+		if(wbuf[j] != rbuf[j]) {
+			dbg("READ WRITE FAILED\n");
+		}
+	}
+
+	return 0;
+}
 
 static int ehci_waiter(int argc, char *argv[])
 {
 	FAR struct usbhost_hubport_s *hport;
-
+	pid_t pid;
 	udbg("ehci_waiter:  Running\n");
 	for (;;) {
 		/* Wait for the device to change state */
@@ -138,6 +222,11 @@ static int ehci_waiter(int argc, char *argv[])
 			/* Yes.. enumerate the newly connected device */
 
 			(void)CONN_ENUMERATE(g_ehciconn, hport);
+
+			pid = kernel_thread("USBMSC verify", 120, 8192, (main_t)usbmsc_verify, (FAR char * const*)NULL);
+			if (pid < 0) {
+				dbg("FAILED TO RUN TEST APP\n");
+			}
 		}
 	}
 
@@ -194,6 +283,12 @@ int imxrt_usbhost_initialize(void)
 
 	/* Then get an instance of the USB EHCI interface. */
 
+#ifdef CONFIG_USBHOST_MSC
+	/* Register the USB mass storage class class */
+	if (usbhost_msc_initialize() != OK) {
+		udbg("Failed to register the mass storage class\n");
+	}
+#endif
 	g_ehciconn = imxrt_ehci_initialize(0);
 	if (!g_ehciconn) {
 		IMXLOG("ERROR: imxrt_ehci_initialize failed\n");
